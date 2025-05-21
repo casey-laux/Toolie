@@ -55,12 +55,62 @@ function Run-Menu {
     }
 }
 
+function interfaceConfig {
+# This script checks the network configuration of the Wi-Fi and Ethernet interfaces
+    function IsValidIP($ip) {
+    return $ip -and -not ($ip.StartsWith("169.254"))
+}
+
+$wifi = Get-NetIPConfiguration -InterfaceAlias "Wi-Fi"
+$eth = Get-NetIPConfiguration | Where-Object {$_.InterfaceAlias -like "Ethernet"}
+
+$wifiIP = $wifi.IPv4Address.IPAddress
+$ethIP = $eth.IPv4Address.IPAddress
+
+$wifiConnected = IsValidIP $wifiIP
+$ethConnected = IsValidIP $ethIP
+write-host "`n"
+Write-Host "WIFI Connected: $wifiConnected"
+Write-Host "Ethernet Connected: $ethConnected"
+Write-Host ""
+
+if ($wifiConnected) {
+    write-host "`n"
+    Write-Host "WIFI IP: $wifiIP"
+    Write-Host "WIFI DNS: $($wifi.DnsServer.ServerAddresses -join ', ')"
+    Write-Host "WIFI Default Gateway: $($wifi.IPv4DefaultGateway.NextHop)"
+    Write-Host ""
+}
+
+if ($ethConnected) {
+    write-host "`n"
+    Write-Host "ETH IP: $ethIP"
+    Write-Host "ETH DNS: $($eth.DnsServer.ServerAddresses -join ', ')"
+    Write-Host "ETH Default Gateway: $($eth.IPv4DefaultGateway.NextHop)"
+}
+write-host "`n"
+
+}
+
+function Get-vtsUSB {
+# This script checks for USB devices connected to the system
+  get-pnpdevice -friendlyName * |
+  Where-Object { $_.InstanceId -like "*usb*" } |
+  Select-Object FriendlyName, Present, Status |
+  Sort-Object Present -Descending | 
+  Out-Host
+
+
+}
+
+
+
 # === Define Actual Submenu Options and Actions ===
 
 # Menu One
-$Menu1Options = @("Run Script A1", "Run Script A2", "Run Script A3")
+$Menu1Options = @("See USB Attached devices", "Run Script A2", "Run Script A3")
 $Menu1Actions = @(
-    { Write-Host "Running Script A1..."; write-host "put your code here" },
+    { Get-vtsUSB ;},
     { Write-Host "Running Script A2..."; write-host "put your code here" },
     { Write-Host "Running Script A3..."; write-host "put your code here" }
 )
@@ -75,9 +125,9 @@ $Menu2Actions = @(
 )
 
 # Menu Three
-$Menu3Options = @("Run Script C1", "Run Script C2", "Run Script C3")
+$Menu3Options = @("Get network info", "Run Script C2", "Run Script C3")
 $Menu3Actions = @(
-    { Write-Host "Running Script C1..."; write-host "put your code here" },
+    { Write-Host "Get Network Info"; interfaceConfig },
     { Write-Host "Running Script C2..."; write-host "put your code here" },
     { Write-Host "Running Script C3..."; write-host "put your code here" }
 )
