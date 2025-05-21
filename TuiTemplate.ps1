@@ -35,7 +35,7 @@ function Pause {
     [void][System.Console]::ReadKey($true)
 }
 
-function Run-Menu {
+function Show-Menu {
     param (
         [string]$MenuTitle,
         [string[]]$Options,
@@ -58,49 +58,67 @@ function Run-Menu {
 function interfaceConfig {
 # This script checks the network configuration of the Wi-Fi and Ethernet interfaces
     function IsValidIP($ip) {
-    return $ip -and -not ($ip.StartsWith("169.254"))
-}
+        return $ip -and -not ($ip.StartsWith("169.254"))
+    }
 
-$wifi = Get-NetIPConfiguration -InterfaceAlias "Wi-Fi"
-$eth = Get-NetIPConfiguration | Where-Object {$_.InterfaceAlias -like "Ethernet"}
+    $wifi = Get-NetIPConfiguration -InterfaceAlias "Wi-Fi"
+    $eth = Get-NetIPConfiguration | Where-Object {$_.InterfaceAlias -like "Ethernet"}
 
-$wifiIP = $wifi.IPv4Address.IPAddress
-$ethIP = $eth.IPv4Address.IPAddress
+    $wifiIP = $wifi.IPv4Address.IPAddress
+    $ethIP = $eth.IPv4Address.IPAddress
 
-$wifiConnected = IsValidIP $wifiIP
-$ethConnected = IsValidIP $ethIP
-write-host "`n"
-Write-Host "WIFI Connected: $wifiConnected"
-Write-Host "Ethernet Connected: $ethConnected"
-Write-Host ""
+    $wifiConnected = IsValidIP $wifiIP
+    $ethConnected = IsValidIP $ethIP
+    Write-Host "`n"
 
-if ($wifiConnected) {
-    write-host "`n"
-    Write-Host "WIFI IP: $wifiIP"
-    Write-Host "WIFI DNS: $($wifi.DnsServer.ServerAddresses -join ', ')"
-    Write-Host "WIFI Default Gateway: $($wifi.IPv4DefaultGateway.NextHop)"
+    if ($wifiConnected) {
+        Write-Host "WIFI Connected: $wifiConnected" -ForegroundColor Green
+    } else {
+        Write-Host "WIFI Connected: $wifiConnected" -ForegroundColor Red
+    }
+
+    if ($ethConnected) {
+        Write-Host "Ethernet Connected: $ethConnected" -ForegroundColor Green
+    } else {
+        Write-Host "Ethernet Connected: $ethConnected" -ForegroundColor Red
+    }
     Write-Host ""
-}
 
-if ($ethConnected) {
-    write-host "`n"
-    Write-Host "ETH IP: $ethIP"
-    Write-Host "ETH DNS: $($eth.DnsServer.ServerAddresses -join ', ')"
-    Write-Host "ETH Default Gateway: $($eth.IPv4DefaultGateway.NextHop)"
-}
-write-host "`n"
+    if ($wifiConnected) {
+        Write-Host "`nWIFI IP: $wifiIP"
+        Write-Host "WIFI DNS: $($wifi.DnsServer.ServerAddresses -join ', ')"
+        Write-Host "WIFI Default Gateway: $($wifi.IPv4DefaultGateway.NextHop)"
+        Write-Host ""
+    }
 
+    if ($ethConnected) {
+        Write-Host "`nETH IP: $ethIP"
+        Write-Host "ETH DNS: $($eth.DnsServer.ServerAddresses -join ', ')"
+        Write-Host "ETH Default Gateway: $($eth.IPv4DefaultGateway.NextHop)"
+    }
+    Write-Host "`n"
 }
 
 function Get-vtsUSB {
-# This script checks for USB devices connected to the system
-  get-pnpdevice -friendlyName * |
-  Where-Object { $_.InstanceId -like "*usb*" } |
-  Select-Object FriendlyName, Present, Status |
-  Sort-Object Present -Descending | 
-  Out-Host
+# This script checks for USB devices connected to the system and colors output by status
+    $devices = Get-PnpDevice -FriendlyName * |
+        Where-Object { $_.InstanceId -like "*usb*" } |
+        Select-Object FriendlyName, Present, Status -Unique |
+        Sort-Object Present -Descending
 
+    # Print header
+    Write-Host ("{0,-35} {1,-8} {2,-8}" -f "FriendlyName", "Present", "Status") 
+    Write-Host ("{0,-35} {1,-8} {2,-8}" -f "------------", "-------", "------") 
 
+    foreach ($dev in $devices) {
+        $color = "Yellow"
+        if ($dev.Present -eq $true -and $dev.Status -eq "OK") {
+            $color = "Green"
+        } elseif ($dev.Present -eq $false -and $dev.Status -eq "Unknown") {
+            $color = "Red"
+        }
+        Write-Host ("{0,-35} {1,-8} {2,-8}" -f $dev.FriendlyName, $dev.Present, $dev.Status) -ForegroundColor $color
+    }
 }
 
 
@@ -138,9 +156,9 @@ while ($true) {
     $mainChoice = Show-ArrowMenu -Title "Main Menu" -Options $mainOptions
 
     switch ($mainChoice) {
-        0 { Run-Menu "Hardware Options" $Menu1Options $Menu1Actions }
-        1 { Run-Menu "Software Options" $Menu2Options $Menu2Actions }
-        2 { Run-Menu "Network Options" $Menu3Options $Menu3Actions }
+        0 { Show-Menu "Hardware Options" $Menu1Options $Menu1Actions }
+        1 { Show-Menu "Software Options" $Menu2Options $Menu2Actions }
+        2 { Show-Menu "Network Options" $Menu3Options $Menu3Actions }
         3 { return }  # Exit the script
         -1 { return } # Escape key also exits
     }
