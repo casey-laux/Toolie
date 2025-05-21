@@ -249,23 +249,49 @@ function Get-VTSUpdates {
 }
 
 
+
+
+# This is how you would add a new menu option
+#if we were adding a new menu option named script A3, it would look like this
+
+#$HardwareOptions = @("See USB Attached devices", "Run Battery Health", "Run Script A3")
+#$HardwareActions = @(
+#    { Get-vtsUSB },
+#    { Get-vtsBattery },
+#    { Write-Host "Running Script A3..."; write-host "put your code here" }
+#)
+
+
+# to add a submenu, you would have to create a new menu and actions like this
+#$SubMenuOptions = @("Submenu Option 1", "Submenu Option 2")
+#$SubMenuActions = @(
+#    { Write-Host "Submenu Option 1 selected" },
+#    { Write-Host "Submenu Option 2 selected" }
+
+# then you would add the submenu to the main menu like this
+#$HardwareOptions = @("See USB Attached devices", "Run Battery Health", "Run Script A3")
+#$HardwareActions = @(
+#    { Get-vtsUSB },
+#    { Get-vtsBattery },
+#    { Show-Menu "SubMenu" $SubMenuOptions $SubMenuActions }
+
+
+
+
     
 # Menu One - Hardware Options
-$HardwareOptions = @("See USB Attached devices", "Run Battery Health", "Run Script A3")
+$HardwareOptions = @("See USB Attached devices", "Run Battery Health")
 $HardwareActions = @(
     { Get-vtsUSB },
-    { Get-vtsBattery },
-    { Write-Host "Running Script A3..."; write-host "put your code here" }
+    { Get-vtsBattery }
 )
 
 
 
 # Menu 2 - Software Options
-$SoftwareOptions = @("Run Script B1", "Run Script B2", "Run Script B3", "Athena")
+$SoftwareOptions = @("Athena")
 $SoftwareActions = @(
-    { Write-Host "Running Script B1..."; write-host "put your code here" },
-    { Write-Host "Running Script B2..."; write-host "put your code here" },
-    { Write-Host "Running Script B3..."; write-host "put your code here" },
+    
     { Show-Menu "Athena" $AthenaOptions $AthenaActions }
 )
 
@@ -277,11 +303,9 @@ $AthenaActions = @(
 
 
 # menu 3 - Network Options
-$NetworkOptions = @("Get network info", "Run Script C2", "Run Script C3")
+$NetworkOptions = @("Get network info")
 $NetworkActions = @(
-    { Get-VTSInterfaces },
-    { Write-Host "Running Script C2..."; write-host "put your code here" },
-    { Write-Host "Running Script C3..."; write-host "put your code here" }
+    { Get-VTSInterfaces }
 )
 
 
@@ -289,11 +313,10 @@ $NetworkActions = @(
 )
 
 # Menu Four - Windows OS Options
-$OSOptions = @("(TESTING)(ADMIN) Update Windows", "Show System Info")
+$OSOptions = @("(ADMIN) Update Windows", "(TESTING)(ADMIN)Fix corrupted files")
 $OSOptionsActions = @(
     { get-vtsupdates },
-    { Write-Host "OS Version:"; [System.Environment]::OSVersion.Version.ToString() },
-    { Write-Host "System Info:"; systeminfo | more }
+    { Dism /online /cleanup-image /restorehealth ;sfc /scannow }
 )
 
 # === Main Menu Loop ===
