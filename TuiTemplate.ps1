@@ -55,7 +55,7 @@ function Show-Menu {
     }
 }
 
-function interfaceConfig {
+function Get-VTSInterfaces {
 # This script checks the network configuration of the Wi-Fi and Ethernet interfaces
     function IsValidIP($ip) {
         return $ip -and -not ($ip.StartsWith("169.254"))
@@ -121,45 +121,192 @@ function Get-vtsUSB {
     }
 }
 
+function Get-vtsBattery {
+    powercfg /batteryreport > $null
+
+    $report = Get-Content "$PWD/battery-report.html"
+
+    $parsed = ($report -split '<span class="label">' |
+    Select-String "DESIGN CAPACITY","FULL CHARGE CAPACITY" |
+    Select-Object -first 2 -expand Line) -replace "DESIGN CAPACITY</span></td><td>" -replace "FULL CHARGE CAPACITY</span></td><td>"
+
+    $DesignCapacity = $parsed[0]
+    $FullChargeCapacity = $parsed[1]
+
+    $DesignCapacityPercentage = $DesignCapacity -replace " mWh"
+    $FullChargeCapacityPercentage = $FullChargeCapacity -replace " mWh"
 
 
-# === Define Actual Submenu Options and Actions ===
+    try {
+        [int]$HealthPercentage = $FullChargeCapacityPercentage/$DesignCapacityPercentage * 100
+    } catch {
+        Write-Host "Error accessing battery, is this a laptop?" -ForegroundColor Red
+        Remove-Item "$PWD/battery-report.html" -Force
+        return
+    }
+    
 
-# Menu One
-$Menu1Options = @("See USB Attached devices", "Run Script A2", "Run Script A3")
-$Menu1Actions = @(
-    { Get-vtsUSB ;},
-    { Write-Host "Running Script A2..."; write-host "put your code here" },
+
+    $Message = "Health: $HealthPercentage %
+    Design Capacity: $DesignCapacity
+    Full Charge Capacity: $FullChargeCapacity"
+    # Display the health percentage with color coding
+    if ($HealthPercentage -lt 80) {
+        Write-Host $Message -ForegroundColor Red
+    } elseif ($HealthPercentage -ge 80 -and $HealthPercentage -le 85) {
+        Write-Host $Message -ForegroundColor Yellow
+    } else {
+        Write-Host $Message -ForegroundColor Green
+    }
+    Remove-Item "$PWD/battery-report.html" -Force
+}
+
+
+function Get-VTSUpdates {
+    # Part 1: Show last 5 installed updates
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    if ([int](Get-Process -Id $PID | Select-Object -ExpandProperty MainWindowHandle) -ne 0) {
+        $arguments = "& '" + $myinvocation.MyCommand.Path + "'"
+        Start-Process powershell.exe -Verb runAs -ArgumentList $arguments
+        exit 
+    }
+}
+    Write-Host "Retrieving the last 5 Windows Update events..." -ForegroundColor Green
+    try {
+        $lastUpdates = Get-WinEvent -LogName System -FilterXPath '
+            *[System[Provider[@Name="Microsoft-Windows-WindowsUpdateClient"] and
+            (EventID=19 or EventID=20)]]' | 
+            Select-Object -First 5 -Property TimeCreated, Message
+
+        if ($lastUpdates) {
+            Write-Host "`nLast 5 Installed Updates:" -ForegroundColor Green
+            $lastUpdates | Format-Table TimeCreated, Message -AutoSize
+        } else {
+            Write-Host "No previous updates found in the system logs." -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "Error: Failed to retrieve update history." -ForegroundColor Red
+        exit
+    }
+
+    # Wait for user input before proceeding
+    Write-Host "`nPress Enter to search for pending updates..." -ForegroundColor Green
+    Read-Host
+
+    # Part 2: Search for and handle pending updates
+    Write-Host "Checking for pending updates..." -ForegroundColor Green
+
+    # Ensure PSWindowsUpdate is installed
+    try {
+        if (!(Get-Module -ListAvailable PSWindowsUpdate)) {
+            Install-Module PSWindowsUpdate -Force -Scope CurrentUser -ErrorAction Stop
+            Write-Host "PSWindowsUpdate module installed successfully." -ForegroundColor Green
+        }
+        Import-Module PSWindowsUpdate -ErrorAction Stop
+        Write-Host "PSWindowsUpdate module imported successfully." -ForegroundColor Green
+    } catch {
+        Write-Host "Error: Failed to install or import PSWindowsUpdate module." -ForegroundColor Red
+        exit
+    }
+
+    #   Temporarily set execution policy to Bypass for this session
+    $originalPolicy = Get-ExecutionPolicy
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+    # Get outstanding updates
+    try {
+        $outstandingUpdates = Get-WindowsUpdate -ErrorAction Stop
+        if ($outstandingUpdates.Count -gt 0) {
+            Write-Host "`nThere are $($outstandingUpdates.Count) outstanding updates available." -ForegroundColor Green
+            Write-Host "`nAvailable Updates:" -ForegroundColor Yellow
+            $outstandingUpdates | Format-Table KB, Size, Title -AutoSize
+
+            Write-Host "`nDo you want to install them now? (y/n)" -ForegroundColor Green
+            $response = Read-Host
+
+            if ($response -match "^(y|yes)$") {
+                try {
+                    Install-WindowsUpdate -AcceptAll -ErrorAction Stop
+                    Write-Host "Updates installed successfully." -ForegroundColor Green
+                } catch {
+                    Write-Host "Error: Failed to install updates." -ForegroundColor Red
+                }
+            } elseif ($response -match "^(n|no)$") {
+                Write-Host "Updates not installed." -ForegroundColor Yellow
+            } else {
+                Write-Host "Invalid response. No action taken." -ForegroundColor Red
+            }
+        } else {
+            Write-Host "No outstanding updates found." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "Error: Failed to retrieve updates." -ForegroundColor Red
+    }
+
+    # Reset execution policy to the original setting
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy $originalPolicy -Force
+    Write-Host "Execution policy reset to original settings." -ForegroundColor Green
+}
+
+
+    
+# Menu One - Hardware Options
+$HardwareOptions = @("See USB Attached devices", "Run Battery Health", "Run Script A3")
+$HardwareActions = @(
+    { Get-vtsUSB },
+    { Get-vtsBattery },
     { Write-Host "Running Script A3..."; write-host "put your code here" }
 )
 
-# Menu Two
-$Menu2Options = @("Run Script B1", "Run Script B2", "Run Script B3")
-$Menu2Actions = @(
-    #
+
+
+# Menu 2 - Software Options
+$SoftwareOptions = @("Run Script B1", "Run Script B2", "Run Script B3", "Athena")
+$SoftwareActions = @(
     { Write-Host "Running Script B1..."; write-host "put your code here" },
     { Write-Host "Running Script B2..."; write-host "put your code here" },
-    { Write-Host "Running Script B3..."; write-host "put your code here" }
+    { Write-Host "Running Script B3..."; write-host "put your code here" },
+    { Show-Menu "Athena" $AthenaOptions $AthenaActions }
 )
 
-# Menu Three
-$Menu3Options = @("Get network info", "Run Script C2", "Run Script C3")
-$Menu3Actions = @(
-    { Write-Host "Get Network Info"; interfaceConfig },
+# Menu 2a Athena Submenu
+$AthenaOptions = @("Submenu Option 1", "Submenu Option 2")
+$AthenaActions = @(
+    { Write-Host "Submenu Option 1 selected" },
+    { Write-Host "Submenu Option 2 selected" }
+
+
+# menu 3 - Network Options
+$NetworkOptions = @("Get network info", "Run Script C2", "Run Script C3")
+$NetworkActions = @(
+    { Get-VTSInterfaces },
     { Write-Host "Running Script C2..."; write-host "put your code here" },
     { Write-Host "Running Script C3..."; write-host "put your code here" }
 )
 
+
+
+)
+
+# Menu Four - Windows OS Options
+$OSOptions = @("(TESTING)(ADMIN) Update Windows", "Show System Info")
+$OSOptionsActions = @(
+    { get-vtsupdates },
+    { Write-Host "OS Version:"; [System.Environment]::OSVersion.Version.ToString() },
+    { Write-Host "System Info:"; systeminfo | more }
+)
+
 # === Main Menu Loop ===
 while ($true) {
-    $mainOptions = @("Hardware Tests", "Software Tests", "Network tests", "Exit")
+    $mainOptions = @("Hardware Tests", "Software Tests", "Network tests", "Windows OS Options", "Exit")
     $mainChoice = Show-ArrowMenu -Title "Main Menu" -Options $mainOptions
 
     switch ($mainChoice) {
-        0 { Show-Menu "Hardware Options" $Menu1Options $Menu1Actions }
-        1 { Show-Menu "Software Options" $Menu2Options $Menu2Actions }
-        2 { Show-Menu "Network Options" $Menu3Options $Menu3Actions }
-        3 { return }  # Exit the script
+        0 { Show-Menu "Hardware Options" $HardwareOptions $HardwareActions }
+        1 { Show-Menu "Software Options" $SoftwareOptions $SoftwareActions }
+        2 { Show-Menu "Network Options" $NetworkOptions $NetworkActions }
+        3 { Show-Menu "Windows OS Options" $OSOptions $OSOptionsActions }
+        4 { return }  # Exit the script
         -1 { return } # Escape key also exits
     }
 }
