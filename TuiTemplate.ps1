@@ -17,6 +17,8 @@ function Show-ArrowMenu {
             }
         }
 
+        Write-Host "`nUse arrow keys to navigate, Enter to select, Esc to go back" -ForegroundColor DarkGray
+
         $key = [System.Console]::ReadKey($true)
 
         switch ($key.Key) {
@@ -31,7 +33,7 @@ function Show-ArrowMenu {
 }
 
 function Pause {
-    Write-Host "`nPress any key to continue..."
+    Write-Host "`nPress any key to continue..." -ForegroundColor DarkGray
     [void][System.Console]::ReadKey($true)
 }
 
@@ -50,6 +52,7 @@ function Show-Menu {
         }
 
         Clear-Host
+        Write-Host "=== $MenuTitle > $($Options[$selection]) ===`n" -ForegroundColor Magenta
         & $Actions[$selection]
         Pause
     }
@@ -61,7 +64,7 @@ function Get-VTSInterfaces {
         return $ip -and -not ($ip.StartsWith("169.254"))
     }
 
-    $wifi = Get-NetIPConfiguration -InterfaceAlias "Wi-Fi"
+    $wifi = Get-NetIPConfiguration -InterfaceAlias "Wi-Fi" 
     $eth = Get-NetIPConfiguration | Where-Object {$_.InterfaceAlias -like "Ethernet"}
 
     $wifiIP = $wifi.IPv4Address.IPAddress
@@ -96,11 +99,12 @@ function Get-VTSInterfaces {
         Write-Host "ETH DNS: $($eth.DnsServer.ServerAddresses -join ', ')"
         Write-Host "ETH Default Gateway: $($eth.IPv4DefaultGateway.NextHop)"
     }
-    Write-Host "`n"
 }
 
 function Get-vtsUSB {
-# This script checks for USB devices connected to the system and colors output by status
+    # This script checks for USB devices connected to the system and colors output by status
+    Write-Host "USB Devices:`n" -ForegroundColor Yellow
+
     $devices = Get-PnpDevice -FriendlyName * |
         Where-Object { $_.InstanceId -like "*usb*" } |
         Select-Object FriendlyName, Present, Status -Unique |
@@ -167,7 +171,7 @@ function Get-VTSUpdates {
     if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     if ([int](Get-Process -Id $PID | Select-Object -ExpandProperty MainWindowHandle) -ne 0) {
         $arguments = "& '" + $myinvocation.MyCommand.Path + "'"
-        Start-Process powershell.exe -Verb runAs -ArgumentList $arguments
+        Write-Host "Administrator privileges required for updates. Please run as Administrator." -ForegroundColor Yellow
         exit 
     }
 }
@@ -186,7 +190,6 @@ function Get-VTSUpdates {
         }
     } catch {
         Write-Host "Error: Failed to retrieve update history." -ForegroundColor Red
-        exit
     }
 
     # Wait for user input before proceeding
@@ -206,7 +209,7 @@ function Get-VTSUpdates {
         Write-Host "PSWindowsUpdate module imported successfully." -ForegroundColor Green
     } catch {
         Write-Host "Error: Failed to install or import PSWindowsUpdate module." -ForegroundColor Red
-        exit
+        return
     }
 
     #   Temporarily set execution policy to Bypass for this session
@@ -248,7 +251,188 @@ function Get-VTSUpdates {
     Write-Host "Execution policy reset to original settings." -ForegroundColor Green
 }
 
+function VTSSpeedtest {
+    <#PSScriptInfo
 
+.VERSION 0.0.3
+
+.GUID a4af5e07-d626-4b97-b4d6-eef7265d1f7c
+
+.AUTHOR asheroto
+
+.COMPANYNAME asheroto
+
+.TAGS PowerShell speedtest speed test speedtest.net
+
+.PROJECTURI https://github.com/asheroto/speedtest
+
+.RELEASENOTES
+[Version 0.0.1] - Initial Release.
+[Version 0.0.2] - Added UseBasicParsing parameter to Invoke-WebRequest commands to fix issue with certain systems.
+[Version 0.0.3] - Adjusted to work with GDPR acceptance.
+
+#>
+
+<#
+.SYNOPSIS
+    Downloads and runs the Speedtest.net CLI client.
+.DESCRIPTION
+    Downloads and runs the Speedtest.net CLI client.
+
+    Designed to use with short URL to make it easy to remember.
+.EXAMPLE
+    speedtest.ps1
+.PARAMETER Version
+    Displays the version of the script.
+.PARAMETER Help
+    Displays the full help information for the script.
+.NOTES
+    Version      : 0.0.3
+    Created by   : asheroto
+.LINK
+    Project Site: https://github.com/asheroto/speedtest
+#>
+    param (
+        [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
+        [string[]]$ScriptArgs
+    )
+
+    # Version
+    $CurrentVersion = '0.0.3'
+    $RepoOwner = 'asheroto'
+    $RepoName = 'speedtest'
+    $PowerShellGalleryName = 'speedtest'
+
+    # Versions
+    $ProgressPreference = 'SilentlyContinue' # Suppress progress bar (makes downloading super fast)
+    $ConfirmPreference = 'None' # Suppress confirmation prompts
+
+    # Display version if -Version is specified
+    if ($Version.IsPresent) {
+        $CurrentVersion
+        exit 0
+    }
+
+    # Display full help if -Help is specified
+    if ($Help) {
+        Get-Help -Name $MyInvocation.MyCommand.Source -Full
+        exit 0
+    }
+
+    # Display $PSVersionTable and Get-Host if -Verbose is specified
+    if ($PSBoundParameters.ContainsKey('Verbose') -and $PSBoundParameters['Verbose']) {
+        $PSVersionTable
+        Get-Host
+    }
+
+    # ============================================================================ #
+    # Startup
+    # ============================================================================ #
+
+    # Scrape the webpage to get the download link
+    function Get-SpeedTestDownloadLink {
+        $url = "https://www.speedtest.net/apps/cli"
+        $webContent = Invoke-WebRequest -Uri $url -UseBasicParsing
+        if ($webContent.Content -match 'href="(https://install\.speedtest\.net/app/cli/ookla-speedtest-[\d\.]+-win64\.zip)"') {
+            return $matches[1]
+        } else {
+            Write-Output "Unable to find the win64 zip download link."
+            return $null
+        }
+    }
+
+    # Download the zip file
+    function Download-SpeedTestZip {
+        param (
+            [string]$downloadLink,
+            [string]$destination
+        )
+        Invoke-WebRequest -Uri $downloadLink -OutFile $destination -UseBasicParsing
+    }
+
+    # Extract the zip file
+    function Extract-Zip {
+    param (
+        [string]$zipPath,
+        [string]$destination
+    )
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $destination)
+    } catch {
+        if ($_.Exception.Message -like "*already exists*") {
+        } else {
+            throw $_
+        }
+    }
+    }
+
+    # Run the speedtest executable
+    function Run-SpeedTest {
+        param (
+            [string]$executablePath,
+            [array]$arguments
+        )
+
+        # Check if '--accept-license' is already in arguments
+        if (-not ($arguments -contains "--accept-license")) {
+            $arguments += "--accept-license"
+        }
+
+        # Check if '--accept-gdpr' is already in arguments
+        if (-not ($arguments -contains "--accept-gdpr")) {
+            $arguments += "--accept-gdpr"
+        }
+
+        & $executablePath $arguments
+    }
+
+    # Cleanup
+    function Remove-File {
+        param (
+            [string]$Path
+        )
+        try {
+            if (Test-Path -Path $Path) {
+                Remove-Item -Path $Path -Recurse -ErrorAction Stop
+            }
+        } catch {
+            Write-Debug "Unable to remove item: $_"
+        }
+    }
+
+    function Remove-Files {
+        param(
+            [string]$zipPath,
+            [string]$folderPath
+        )
+        Remove-File -Path $zipPath
+        Remove-File -Path $folderPath
+    }
+
+    # Main Script
+    try {
+        $tempFolder = $env:TEMP
+        $zipFilePath = Join-Path $tempFolder "speedtest-win64.zip"
+        $extractFolderPath = Join-Path $tempFolder "speedtest-win64"
+
+        Remove-Files -zipPath $zipFilePath -folderPath $extractFolderPath
+
+        $downloadLink = Get-SpeedTestDownloadLink
+        Download-SpeedTestZip -downloadLink $downloadLink -destination $zipFilePath
+
+        Extract-Zip -zipPath $zipFilePath -destination $extractFolderPath
+
+        $executablePath = Join-Path $extractFolderPath "speedtest.exe"
+        Run-SpeedTest -executablePath $executablePath -arguments $ScriptArgs
+
+        Remove-Files -zipPath $zipFilePath -folderPath $extractFolderPath
+
+        Write-Output "Done."
+    } catch {
+        Write-Error "An error occurred: $_"
+    }
+}
 
 
 # This is how you would add a new menu option
@@ -296,16 +480,18 @@ $SoftwareActions = @(
 )
 
 # Menu 2a Athena Submenu
-$AthenaOptions = @("Submenu Option 1", "Submenu Option 2")
+$AthenaOptions = @("(ADMIN)(TESTING)Reset ADM", "Reinstall ADM")
 $AthenaActions = @(
-    { Write-Host "Submenu Option 1 selected" },
+    { Restart-Service athenaNetDeviceManager3.1 },
     { Write-Host "Submenu Option 2 selected" }
 
 
 # menu 3 - Network Options
-$NetworkOptions = @("Get network info")
+$NetworkOptions = @("Get network info", "Speed Test")
 $NetworkActions = @(
     { Get-VTSInterfaces }
+    { VTSSpeedtest }
+
 )
 
 
@@ -329,7 +515,7 @@ while ($true) {
         1 { Show-Menu "Software Options" $SoftwareOptions $SoftwareActions }
         2 { Show-Menu "Network Options" $NetworkOptions $NetworkActions }
         3 { Show-Menu "Windows OS Options" $OSOptions $OSOptionsActions }
-        4 { return }  # Exit the script
-        -1 { return } # Escape key also exits
+        4 { return }  
+        -1 { return } 
     }
 }
