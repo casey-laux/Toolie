@@ -435,6 +435,9 @@ function VTSSpeedtest {
 }
 
 
+
+
+
 # This is how you would add a new menu option
 #if we were adding a new menu option named script A3, it would look like this
 
@@ -483,26 +486,25 @@ $SoftwareActions = @(
 $AthenaOptions = @("(ADMIN)(TESTING)Reset ADM", "Reinstall ADM")
 $AthenaActions = @(
     { Restart-Service athenaNetDeviceManager3.1 },
-    { Write-Host "Submenu Option 2 selected" }
+    { Write-Host "Reinstalling ADM..."; Write-Host "Put your code here" }
+)
 
 
 # menu 3 - Network Options
 $NetworkOptions = @("Get network info", "Speed Test")
 $NetworkActions = @(
-    { Get-VTSInterfaces }
+    { Get-VTSInterfaces },
     { VTSSpeedtest }
 
 )
 
 
 
-)
-
 # Menu Four - Windows OS Options
 $OSOptions = @("(ADMIN) Update Windows", "(TESTING)(ADMIN)Fix corrupted files")
 $OSOptionsActions = @(
-    { get-vtsupdates },
-    { Dism /online /cleanup-image /restorehealth ;sfc /scannow }
+    { Get-VTSUpdates },
+    { Dism /online /cleanup-image /restorehealth; sfc /scannow }
 )
 
 # === Main Menu Loop ===
