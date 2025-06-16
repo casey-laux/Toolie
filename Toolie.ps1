@@ -435,8 +435,413 @@ function VTSSpeedtest {
 }
 
 
+function PrinterRepair {
+    # Script: Reconfigure Network Printers for SWC (Add First, Remove After Success)
+# Description:
+#   This script removes existing printers and re-adds them based on the following rules:
+#     1. Any printer with SWC in the server name is replaced by \\SWC-PS01\<ShareName>
+#     2. For printers not on CH-DC/CH-DC2:
+#           - Check if a printer with the same share name exists on CH-DC or CH-DC2.
+#           - If found, add it from there first, then remove the current printer.
+#     3. For printers on CH-DC/CH-DC2 using FQDN:
+#           - Add it using the short server name first, then remove the current printer.
 
 
+
+$logPath = Join-Path -Path "\temp\" -ChildPath "printerRepairLog.txt"
+
+function Write-Log {
+    param (
+        [string]$Message,
+        [string]$Color = "White"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $entry = "$timestamp - $Message"
+    # Write to console
+    Write-Host $Message -ForegroundColor $Color
+    # Write to log file
+    Add-Content -Path $logPath -Value $entry
+}
+
+# Start of Script
+Write-Log "`n===== Starting Printer Reconfiguration Script =====`n" "Cyan"
+
+# Get all network printers (skip local printers like "OneNote (Desktop)")
+$nsprinters = Get-Printer \\ns-dc* | Select-Object -ExpandProperty Name
+$DC54printers = Get-Printer \\DC54* | Select-Object -ExpandProperty Name
+$bimaPrinters = Get-Printer \\ch-bima-ps01* | Select-Object -ExpandProperty Name
+
+Write-Log "`nStarting NS Printer Cleanup..." "Cyan"
+foreach ($printer in $nsprinters) {
+    Write-Log "Re-adding and removing NS printer: $printer" "Yellow"
+    Add-Printer -ConnectionName "$printer"
+    Start-Sleep 1
+    Remove-Printer "$printer"
+    
+    if ($?) {
+        Write-Log "$printer removed." "Green"
+    } else {
+        Write-Log "Failed to remove $printer." "Red"
+    }
+}
+
+foreach ($printer in $DC54printers) {
+    Add-Printer -ConnectionName "$printer"
+    Start-Sleep 1
+    Remove-Printer "$printer"
+    if ($?) {
+        Write-Log "$printer removed." "Green"
+    } else {
+        Write-Log "Failed to remove $printer." "Red"
+    }
+}
+
+
+Write-Log "`nStarting CH-BIMA-PS01 Printer Cleanup..." "Cyan"
+foreach ($printer in $bimaPrinters) {
+    Write-Log "Re-adding and removing CH-BIMA-PS01 printer: $printer" "Yellow"
+    Add-Printer -ConnectionName "$printer"
+    Start-Sleep 1
+    Remove-Printer "$printer"
+    
+    if ($?) {
+        Write-Log "$printer removed." "Green"
+    } else {
+        Write-Log "Failed to remove $printer." "Red"
+    }
+}
+
+$printers = Get-Printer | Where-Object { $_.Name -like "\\*" }
+
+Write-Log "`nStarting Printer Reconfiguration..." "Cyan"
+foreach ($printer in $printers) {
+    # Match printer names of the form \\Server\ShareName using Regex magic.
+    if ($printer.Name -match "^\\\\([^\\]+)\\(.+)$") {
+        $server    = $matches[1]
+        $shareName = $matches[2]
+
+        # New Rule: If server name or sharename contains "SWC" (case-insensitive)
+        if ($server -match "SWC" -or $shareName -match "SWC") {
+
+            # Check if printer is already on SWC-PS01
+            if ($server -ieq "SWC-PS01") {
+                Write-Log "Printer $($printer.Name) is already on SWC-PS01. Skipping..." "Yellow"
+                continue
+            }
+
+            $newPrinterPath = "\\SWC-PS01\$shareName"
+            Write-Log "`nAdding printer $newPrinterPath (SWC Rule)" "Cyan"
+
+            try {
+                Add-Printer -ConnectionName $newPrinterPath -ErrorAction Stop
+                Write-Log "Successfully added $newPrinterPath" "Green"
+
+                # Now remove the old printer
+                Remove-Printer -Name $printer.Name -Confirm:$false
+                Write-Log "Removed old printer $($printer.Name)" "Green"
+            }
+            catch {
+                Write-Log "Failed to add printer $newPrinterPath. Skipping removal of $($printer.Name)" "Red"
+            }
+
+            continue
+        }
+
+        # Case 1: Printer is NOT on CH-DC or CH-DC2
+        if ($server -notmatch "^(CH-DC|CH-DC2)(\.|$)") {
+            $replacementServer = $null
+
+            # Attempt to find a matching printer on CH-DC
+            try {
+                $printerOnDC = Get-Printer -ComputerName "CH-DC" -Name $shareName -ErrorAction Stop
+                if ($printerOnDC) {
+                    $replacementServer = "CH-DC"
+                }
+            }
+            catch { }
+
+            # If not found on CH-DC, try CH-DC2
+            if (-not $replacementServer) {
+                try {
+                    $printerOnDC2 = Get-Printer -ComputerName "CH-DC2" -Name $shareName -ErrorAction Stop
+                    if ($printerOnDC2) {
+                        $replacementServer = "CH-DC2"
+                    }
+                }
+                catch { }
+            }
+
+            if ($replacementServer) {
+                $newPrinterPath = "\\$replacementServer\$shareName"
+                Write-Log "`nAdding printer $newPrinterPath (Replacement for $($printer.Name))" "Cyan"
+
+                try {
+                    Add-Printer -ConnectionName $newPrinterPath -ErrorAction Stop
+                    Write-Log "Successfully added $newPrinterPath" "Green"
+
+                    # Now remove the old printer
+                    Remove-Printer -Name $printer.Name -Confirm:$false
+                    Write-Log "Removed old printer $($printer.Name)" "Green"
+                }
+                catch {
+                    Write-Log "Failed to add printer $newPrinterPath. Skipping removal of $($printer.Name)" "Red"
+                }
+            }
+            else {
+                Write-Log "No matching printer found on CH-DC/CH-DC2 for $($printer.Name); skipping..." "Red"
+            }
+        }
+        else {
+            # Case 2: Printer is on CH-DC or CH-DC2 but using an FQDN (contains a dot)
+            if ($server -match "\.") {
+                $shortServer = $server.Split('.')[0]
+
+                if ($shortServer -eq "CH-DC" -or $shortServer -eq "CH-DC2") {
+                    $newPrinterPath = "\\$shortServer\$shareName"
+                    Write-Log "`nAdding printer $newPrinterPath (Re-adding with short server name)" "Cyan"
+
+                    try {
+                        Add-Printer -ConnectionName $newPrinterPath -ErrorAction Stop
+                        Write-Log "Successfully added $newPrinterPath" "Green"
+
+                        # Now remove the old printer
+                        Remove-Printer -Name $printer.Name -Confirm:$false
+                        Write-Log "Removed old printer $($printer.Name)" "Green"
+                    }
+                    catch {
+                        Write-Log "Failed to add printer $newPrinterPath. Skipping removal of $($printer.Name)" "Red"
+                    }
+                }
+            }
+        }
+    }
+}
+
+Write-Log "`nPrinter reconfiguration complete!" "Green"
+Write-Log "`n===== End of Printer Reconfiguration Script =====`n" "Cyan"
+
+
+
+
+    
+}
+
+function clear-Space {
+        # Set Execution Policy to bypass for the current session
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+
+    # Function to get the available free space on the drive
+    function Get-FreeSpace {
+        $drive = Get-PSDrive -Name C
+        return $drive.Used, $drive.Free
+    }
+
+    # Record initial free space
+    $initialUsedSpace, $initialFreeSpace = Get-FreeSpace
+
+    # Start Component Cleanup using DISM
+    Write-Host "Starting DISM component cleanup..."
+    Start-Process -FilePath "Dism.exe" -ArgumentList "/online /Cleanup-Image /StartComponentCleanup /ResetBase" -Wait
+    Write-Host "DISM cleanup complete."
+
+    # Stop Windows Update services to clean SoftwareDistribution folder contents
+    Write-Host "Stopping Windows Update and Background Intelligent Transfer services... "
+    Stop-Service -Name wuauserv -ErrorAction SilentlyContinue
+    Stop-Service -Name bits -ErrorAction SilentlyContinue
+    Write-Host "Services stopped."
+
+    # Clean up the SoftwareDistribution folder contents using robocopy
+    $SoftwareDistributionPath = "C:\Windows\SoftwareDistribution"
+    if (Test-Path $SoftwareDistributionPath -ErrorAction SilentlyContinue) {
+        Write-Host "Cleaning up SoftwareDistribution folder contents..."
+        # Use robocopy to effectively delete the contents
+        $TempPath = Join-Path $SoftwareDistributionPath "empty"
+        New-Item -ItemType Directory -Path $TempPath -Force | Out-Null
+        robocopy $TempPath $SoftwareDistributionPath /MIR /XD $TempPath
+        Remove-Item -Recurse -Force -Path $TempPath
+        Write-Host "SoftwareDistribution folder contents deleted."
+    } else {
+        Write-Host "SoftwareDistribution folder not found."
+    }
+
+    # Restart the stopped services (Windows Update and BITS)
+    Write-Host "Restarting Windows Update and Background Intelligent Transfer services... "
+    Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+    Start-Service -Name bits -ErrorAction SilentlyContinue
+    Write-Host "Services restarted."
+
+    # Cleanup temp files for all user profiles except "Public" and "Default"
+    Write-Host "Cleaning temp files for all users except 'Public' and 'Default'..."
+
+    # Get all user profile directories except "Public" and "Default"
+    $UserProfiles = Get-ChildItem "C:\Users" | Where-Object { 
+        $_.Name -notin @('Public', 'Default') -and $_.PSIsContainer 
+    }
+
+# Initialize a list to store the names of users whose temp files were deleted
+    $deletedUsers = @()
+
+    # Loop through each user profile and delete temp files
+    foreach ($UserProfile in $UserProfiles) {
+        $TempFolder = Join-Path $UserProfile.FullName "AppData\Local\Temp"
+
+        if (Test-Path $TempFolder -ErrorAction SilentlyContinue) {
+            try {
+                # Delete all contents in the Temp folder
+                Get-ChildItem $TempFolder -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+                $deletedUsers += $UserProfile.Name
+            } catch {
+                Write-Host "Failed to delete temp files for user: $($UserProfile.Name) - $_"
+            }
+        }
+    }   
+
+    # Output the names of all users whose temp files were deleted, grouped together
+    if ($deletedUsers.Count -gt 0) {
+        Write-Host "Temp files deleted for users: $($deletedUsers -join ', ')"
+    } else {
+        Write-Host "No temp files were deleted."
+    }
+
+    Write-Host "Temp folder cleanup complete."
+
+    # Calculate and output total space cleared
+    $finalUsedSpace, $finalFreeSpace = Get-FreeSpace
+    $spaceFreed = $finalFreeSpace - $initialFreeSpace
+
+    Write-Host "Initial free space: $([math]::Round($initialFreeSpace / 1GB, 2)) GB"
+    Write-Host "Final free space: $([math]::Round($finalFreeSpace / 1GB, 2)) GB"
+    Write-Host "Total space freed: $([math]::Round($spaceFreed / 1GB, 2)) GB"
+
+    Write-Host "Disk space cleanup complete."
+
+
+
+
+    
+}
+
+function Get-VTSNetAdapter {
+    function Show-Adapters {
+    do {
+        Clear-Host
+        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+        if (-not $adapters) {
+            Write-Error "No active network adapters found."
+            return
+        }
+
+        Write-Host "`nAvailable Network Adapters:" -ForegroundColor Cyan
+        Write-Host "0. Exit"
+        $adapters | ForEach-Object -Begin { $i = 1 } -Process {
+            Write-Host "$i. $($_.Name)"
+            $i++
+        }
+
+        $adapterChoice = Read-Host "`nSelect adapter number"
+        if ($adapterChoice -eq '0') { return }
+
+        $selectedAdapter = $adapters[$adapterChoice - 1]
+        if ($selectedAdapter) {
+            Show-Properties -AdapterName $selectedAdapter.Name
+        } else {
+            Write-Host "❌ Invalid selection. Press Enter to try again." -ForegroundColor Red
+            Read-Host
+        }
+
+    } while ($true)
+}
+
+function Show-Properties {
+    param ([string]$AdapterName)
+
+    do {
+        Clear-Host
+        $props = Get-NetAdapterAdvancedProperty -Name $AdapterName
+        if (-not $props) {
+            Write-Error "No advanced properties found for $AdapterName"
+            return
+        }
+
+        Write-Host "`nAdvanced Properties for adapter: $AdapterName" -ForegroundColor Cyan
+        Write-Host "0. Back"
+        $props | ForEach-Object -Begin { $j = 1 } -Process {
+            Write-Host "$j. $($_.DisplayName): $($_.DisplayValue)"
+            $j++
+        }
+
+        $propChoice = Read-Host "`nSelect property number to modify"
+        if ($propChoice -eq '0') { return }
+
+        $selectedProp = $props[$propChoice - 1]
+        if ($selectedProp) {
+            Show-PropertyEditor -AdapterName $AdapterName -Prop $selectedProp
+        } else {
+            Write-Host "❌ Invalid selection. Press Enter to try again." -ForegroundColor Red
+            Read-Host
+        }
+
+    } while ($true)
+}
+
+function Show-PropertyEditor {
+    param (
+        [string]$AdapterName,
+        $Prop
+    )
+
+    do {
+        Clear-Host
+        Write-Host "`nModify Property: $($Prop.DisplayName)" -ForegroundColor Yellow
+        Write-Host "Current Value: $($Prop.DisplayValue)"
+        Write-Host ""
+
+        # Try both singular and plural variants
+        $validValues = @()
+        if ($Prop.PSObject.Properties.Name -contains 'ValidDisplayValue') {
+            $validValues = $Prop.ValidDisplayValue
+        }
+        elseif ($Prop.PSObject.Properties.Name -contains 'ValidDisplayValues') {
+            $validValues = $Prop.ValidDisplayValues
+        }
+
+        if ($validValues.Count -gt 0) {
+            Write-Host "0. Back"
+            $validValues | ForEach-Object -Begin { $k = 1 } -Process {
+                Write-Host "$k. $_"
+                $k++
+            }
+
+            $valChoice = Read-Host "`nSelect new value number"
+            if ($valChoice -eq '0') { return }
+
+            $newValue = $validValues[$valChoice - 1]
+        } else {
+            $newValue = Read-Host "`nNo predefined values found. Enter new value manually (or 0 to cancel)"
+            if ($newValue -eq '0') { return }
+        }
+
+        try {
+            Set-NetAdapterAdvancedProperty -Name $AdapterName `
+                -DisplayName $Prop.DisplayName `
+                -DisplayValue $newValue -NoRestart
+            Write-Host "`n✅ Property updated successfully!" -ForegroundColor Green
+        } catch {
+            Write-Error "❌ Failed to update property: $_"
+        }
+
+        Read-Host "`nPress Enter to return"
+        return
+
+    } while ($true)
+}
+
+
+# Launch the interactive tool
+Show-Adapters
+
+    
+}
 
 # This is how you would add a new menu option
 #if we were adding a new menu option named script A3, it would look like this
@@ -480,7 +885,16 @@ $SoftwareOptions = @("Athena")
 $SoftwareActions = @(
     
     { Show-Menu "Athena" $AthenaOptions $AthenaActions }
+    { Show-Menu "Adobe" $AdobeOptions $AdobeActions }
 )
+
+$adobeOptions = @("(ADMIN)Adobe Reader DC install", "(ADMIN)(LICENSE)Adobe Reader PRO install")
+$adobeActions = @(
+    {choco install adobereader -y; Write-Host "Adobe Reader installed"; },
+    { Write-Host "Adobe Reader selected"; Write-Host "Put your code here" }
+)  
+
+
 
 # Menu 2a Athena Submenu
 $AthenaOptions = @("(ADMIN)(TESTING)Reset ADM", "Reinstall ADM")
@@ -491,25 +905,35 @@ $AthenaActions = @(
 
 
 # menu 3 - Network Options
-$NetworkOptions = @("Get network info", "Speed Test")
+$NetworkOptions = @("Get network info", "Speed Test", "(TESTING)(ADMIN)Get Network Adapters")
 $NetworkActions = @(
     { Get-VTSInterfaces },
-    { VTSSpeedtest }
+    { VTSSpeedtest },
+    { Get-VTSNetAdapter }
 
 )
 
 
 
 # Menu Four - Windows OS Options
-$OSOptions = @("(ADMIN) Update Windows", "(TESTING)(ADMIN)Fix corrupted files")
+$OSOptions = @("(ADMIN) Update Windows", "(ADMIN)Fix corrupted files" , "(TESTING)(ADMIN)Clear Disk Space")
 $OSOptionsActions = @(
     { Get-VTSUpdates },
-    { Dism /online /cleanup-image /restorehealth; sfc /scannow }
+    { Dism /online /cleanup-image /restorehealth; sfc /scannow },
+    { clear-Space }
+)
+
+# Menu 5 - Printer Options
+$PrinterOptions = @("List Printers", "(USER)Add Printer", "Remove old print server printers and FQDN printers")
+$PrinterActions = @(
+    { Get-Printer },
+    { Write-Host "Add Printer functionality placeholder. Put your tests here." }
+    { PrinterRepair }
 )
 
 # === Main Menu Loop ===
 while ($true) {
-    $mainOptions = @("Hardware Tests", "Software Tests", "Network tests", "Windows OS Options", "Exit")
+    $mainOptions = @("Hardware Tests", "Software Tests", "Network tests", "Windows OS Options", "Printer Options", "Exit")
     $mainChoice = Show-ArrowMenu -Title "Main Menu" -Options $mainOptions
 
     switch ($mainChoice) {
@@ -517,7 +941,8 @@ while ($true) {
         1 { Show-Menu "Software Options" $SoftwareOptions $SoftwareActions }
         2 { Show-Menu "Network Options" $NetworkOptions $NetworkActions }
         3 { Show-Menu "Windows OS Options" $OSOptions $OSOptionsActions }
-        4 { return }  
+        4 { Show-Menu "Printer Options" $PrinterOptions $PrinterActions }
+        5 { return }  
         -1 { return } 
     }
 }
