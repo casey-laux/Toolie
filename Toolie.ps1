@@ -723,124 +723,119 @@ function clear-Space {
 
 function Get-VTSNetAdapter {
     function Show-Adapters {
-    do {
-        Clear-Host
-        $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
-        if (-not $adapters) {
-            Write-Error "No active network adapters found."
-            return
-        }
-
-        Write-Host "`nAvailable Network Adapters:" -ForegroundColor Cyan
-        Write-Host "0. Exit"
-        $adapters | ForEach-Object -Begin { $i = 1 } -Process {
-            Write-Host "$i. $($_.Name)"
-            $i++
-        }
-
-        $adapterChoice = Read-Host "`nSelect adapter number"
-        if ($adapterChoice -eq '0') { return }
-
-        $selectedAdapter = $adapters[$adapterChoice - 1]
-        if ($selectedAdapter) {
-            Show-Properties -AdapterName $selectedAdapter.Name
-        } else {
-            Write-Host "❌ Invalid selection. Press Enter to try again." -ForegroundColor Red
-            Read-Host
-        }
-
-    } while ($true)
-}
-
-function Show-Properties {
-    param ([string]$AdapterName)
-
-    do {
-        Clear-Host
-        $props = Get-NetAdapterAdvancedProperty -Name $AdapterName
-        if (-not $props) {
-            Write-Error "No advanced properties found for $AdapterName"
-            return
-        }
-
-        Write-Host "`nAdvanced Properties for adapter: $AdapterName" -ForegroundColor Cyan
-        Write-Host "0. Back"
-        $props | ForEach-Object -Begin { $j = 1 } -Process {
-            Write-Host "$j. $($_.DisplayName): $($_.DisplayValue)"
-            $j++
-        }
-
-        $propChoice = Read-Host "`nSelect property number to modify"
-        if ($propChoice -eq '0') { return }
-
-        $selectedProp = $props[$propChoice - 1]
-        if ($selectedProp) {
-            Show-PropertyEditor -AdapterName $AdapterName -Prop $selectedProp
-        } else {
-            Write-Host "❌ Invalid selection. Press Enter to try again." -ForegroundColor Red
-            Read-Host
-        }
-
-    } while ($true)
-}
-
-function Show-PropertyEditor {
-    param (
-        [string]$AdapterName,
-        $Prop
-    )
-
-    do {
-        Clear-Host
-        Write-Host "`nModify Property: $($Prop.DisplayName)" -ForegroundColor Yellow
-        Write-Host "Current Value: $($Prop.DisplayValue)"
-        Write-Host ""
-
-        # Try both singular and plural variants
-        $validValues = @()
-        if ($Prop.PSObject.Properties.Name -contains 'ValidDisplayValue') {
-            $validValues = $Prop.ValidDisplayValue
-        }
-        elseif ($Prop.PSObject.Properties.Name -contains 'ValidDisplayValues') {
-            $validValues = $Prop.ValidDisplayValues
-        }
-
-        if ($validValues.Count -gt 0) {
-            Write-Host "0. Back"
-            $validValues | ForEach-Object -Begin { $k = 1 } -Process {
-                Write-Host "$k. $_"
-                $k++
+        while ($true) {
+            $adapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+            if (-not $adapters) {
+                Write-Error "No active network adapters found."
+                return
             }
 
-            $valChoice = Read-Host "`nSelect new value number"
-            if ($valChoice -eq '0') { return }
+            $adapterNames = $adapters | Select-Object -ExpandProperty Name
+            $selection = Show-ArrowMenu -Title "Available Network Adapters" -Options ($adapterNames + @("<< Back"))
 
-            $newValue = $validValues[$valChoice - 1]
-        } else {
-            $newValue = Read-Host "`nNo predefined values found. Enter new value manually (or 0 to cancel)"
-            if ($newValue -eq '0') { return }
+            if ($selection -eq -1 -or $selection -eq $adapterNames.Length) {
+                return
+            }
+
+            $selectedAdapter = $adapterNames[$selection]
+            Show-Properties -AdapterName $selectedAdapter
         }
+    }
 
-        try {
-            Set-NetAdapterAdvancedProperty -Name $AdapterName `
-                -DisplayName $Prop.DisplayName `
-                -DisplayValue $newValue -NoRestart
-            Write-Host "`n✅ Property updated successfully!" -ForegroundColor Green
-        } catch {
-            Write-Error "❌ Failed to update property: $_"
+    function Show-Properties {
+        param ([string]$AdapterName)
+
+        while ($true) {
+            $props = Get-NetAdapterAdvancedProperty -Name $AdapterName
+            if (-not $props) {
+                Write-Error "No advanced properties found for $AdapterName"
+                return
+            }
+
+            # Properties per page
+            $itemsPerPage = 10
+            $totalProps = $props.Count
+            $totalPages = [Math]::Ceiling($totalProps / $itemsPerPage)
+            $currentPage = 0
+
+            while ($true) {
+                Clear-Host
+                Write-Host "=== Advanced Properties for $AdapterName (Page $($currentPage + 1) of $totalPages) ===`n"
+
+                # Get items for current page
+                $startIndex = $currentPage * $itemsPerPage
+                $pageProps = $props | Select-Object -Skip $startIndex -First $itemsPerPage
+                $propNames = $pageProps | Select-Object -ExpandProperty DisplayName
+
+                # Add navigation options
+                $options = $propNames
+                if ($totalPages -gt 1) {
+                    if ($currentPage -gt 0) { $options += "Previous Page" }
+                    if ($currentPage -lt ($totalPages - 1)) { $options += "Next Page" }
+                }
+                $options += "<< Back"
+
+                $selection = Show-ArrowMenu -Title "Page $($currentPage + 1) of $totalPages" -Options $options
+
+                # Handle navigation
+                if ($selection -eq -1 -or $selection -eq $options.Count - 1) {
+                    return
+                }
+                elseif ($selection -ge $propNames.Count) {
+                    if ($options[$selection] -eq "Previous Page") {
+                        $currentPage--
+                        continue
+                    }
+                    elseif ($options[$selection] -eq "Next Page") {
+                        $currentPage++
+                        continue
+                    }
+                }
+                else {
+                    $selectedProp = $pageProps[$selection]
+                    Show-PropertyEditor -AdapterName $AdapterName -Prop $selectedProp
+                }
+            }
         }
+    }
 
-        Read-Host "`nPress Enter to return"
-        return
+    function Show-PropertyEditor {
+        param (
+            [string]$AdapterName,
+            $Prop
+        )
 
-    } while ($true)
-}
+        while ($true) {
+            $validValues = @()
+            if ($Prop.PSObject.Properties.Name -contains 'ValidDisplayValue') {
+                $validValues = $Prop.ValidDisplayValue
+            } elseif ($Prop.PSObject.Properties.Name -contains 'ValidDisplayValues') {
+                $validValues = $Prop.ValidDisplayValues
+            }
 
+            $selection = Show-ArrowMenu -Title "Modify Property: $($Prop.DisplayName)" -Options ($validValues + @("<< Back"))
 
-# Launch the interactive tool
-Show-Adapters
+            if ($selection -eq -1 -or $selection -eq $validValues.Length) {
+                return
+            }
 
-    
+            $newValue = $validValues[$selection]
+
+            try {
+                Set-NetAdapterAdvancedProperty -Name $AdapterName `
+                    -DisplayName $Prop.DisplayName `
+                    -DisplayValue $newValue -NoRestart
+                Write-Host "`n✅ Property updated successfully!" -ForegroundColor Green
+            } catch {
+                Write-Error "❌ Failed to update property: $_"
+            }
+
+            Pause
+            return
+        }
+    }
+
+    Show-Adapters
 }
 
 # This is how you would add a new menu option
@@ -905,7 +900,7 @@ $AthenaActions = @(
 
 
 # menu 3 - Network Options
-$NetworkOptions = @("Get network info", "Speed Test", "(TESTING)(ADMIN)Get Network Adapters")
+$NetworkOptions = @("Get network info", "Speed Test", "(TESTING)(ADMIN)Change Network Adapters")
 $NetworkActions = @(
     { Get-VTSInterfaces },
     { VTSSpeedtest },
