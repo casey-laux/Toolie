@@ -1,3 +1,31 @@
+$asciiArt = @"
+ ____  _____  _____  __    ____  ____ 
+(_  _)(  _  )(  _  )(  )  (_  _)( ___)
+  )(   )(_)(  )(_)(  )(__  _)(_  )__) 
+ (__) (_____)(_____)(____)(____)(____)
+
+The TuiToolkit
+"@
+
+function Write-CenteredText {
+    param(
+        [string]$Text,
+        [System.ConsoleColor]$Color = [System.ConsoleColor]::White
+    )
+    $screenWidth = $host.UI.RawUI.WindowSize.Width
+    $spaces = [Math]::Max(0, ($screenWidth - $Text.Length) / 2)
+    Write-Host (" " * [Math]::Floor($spaces) + $Text) -ForegroundColor $Color
+}
+
+function Clear-HostWithBanner {
+    Clear-Host
+    $asciiLines = $asciiArt -split "`n"
+    foreach ($line in $asciiLines) {
+        Write-CenteredText $line
+    }
+    Write-Host ""
+}
+
 function Show-ArrowMenu {
     param (
         [string]$Title,
@@ -6,18 +34,18 @@ function Show-ArrowMenu {
 
     $index = 0
     while ($true) {
-        Clear-Host
-        Write-Host "=== $Title ===`n"
+        Clear-HostWithBanner
+        Write-CenteredText "=== $Title ===`n"
 
         for ($i = 0; $i -lt $Options.Length; $i++) {
             if ($i -eq $index) {
-                Write-Host "> $($Options[$i])" -ForegroundColor Cyan
+                Write-CenteredText "> $($Options[$i])" -Color Cyan
             } else {
-                Write-Host "  $($Options[$i])"
+                Write-CenteredText "  $($Options[$i])"
             }
         }
 
-        Write-Host "`nUse arrow keys to navigate, Enter to select, Esc to go back" -ForegroundColor DarkGray
+        Write-CenteredText "`nUse arrow keys to navigate, Enter to select, Esc to go back" -Color DarkGray
 
         $key = [System.Console]::ReadKey($true)
 
@@ -51,10 +79,11 @@ function Show-Menu {
             break
         }
 
-        Clear-Host
-        Write-Host "=== $MenuTitle > $($Options[$selection]) ===`n" -ForegroundColor Magenta
+        Clear-HostWithBanner
+        Write-CenteredText "=== $MenuTitle > $($Options[$selection]) ===`n" -Color Magenta
         & $Actions[$selection]
-        Pause
+        Write-CenteredText "`nPress any key to continue..." -Color DarkGray
+        [void][System.Console]::ReadKey($true)
     }
 }
 
@@ -730,8 +759,8 @@ function Get-VTSNetAdapter {
                 return
             }
 
-            $adapterNames = $adapters | Select-Object -ExpandProperty Name
-            $selection = Show-ArrowMenu -Title "Available Network Adapters" -Options ($adapterNames + @("<< Back"))
+                $adapterNames = @($adapters | Select-Object -ExpandProperty Name)
+                $selection = Show-ArrowMenu -Title "Available Network Adapters" -Options ($adapterNames + @("<< Back"))
 
             if ($selection -eq -1 -or $selection -eq $adapterNames.Length) {
                 return
@@ -825,9 +854,9 @@ function Get-VTSNetAdapter {
                 Set-NetAdapterAdvancedProperty -Name $AdapterName `
                     -DisplayName $Prop.DisplayName `
                     -DisplayValue $newValue -NoRestart
-                Write-Host "`n✅ Property updated successfully!" -ForegroundColor Green
+                Write-Host "`n Property updated successfully!" -ForegroundColor Green
             } catch {
-                Write-Error "❌ Failed to update property: $_"
+                Write-Error " Failed to update property: $_" -ForegroundColor Red
             }
 
             Pause
@@ -837,6 +866,288 @@ function Get-VTSNetAdapter {
 
     Show-Adapters
 }
+
+
+function Reset-NetAdapter {
+    <#
+    .SYNOPSIS
+        Resets the network adapter settings to default.
+    .DESCRIPTION
+        This function resets the network adapter settings to their default values.
+    .EXAMPLE
+        reset-NetAdapter
+    #>
+    Write-Host "Resetting network adapter settings to default..." -ForegroundColor Yellow
+    Get-NetAdapter | ForEach-Object {
+        Write-Host "Resetting adapter: $($_.Name)" -ForegroundColor Cyan
+        Reset-NetAdapterAdvancedProperty -Name $_.Name -NoRestart
+    }
+    Write-Host "Network adapters have been reset to default settings." -ForegroundColor Green
+    
+}
+
+function Add-VTSPrinter {
+    # Initialize variables
+    $SelectedPrinter = ""
+    $SelectedPrintServer = ""
+
+    function Show-SearchableMenu {
+    param (
+        [string]$Title,
+        [array]$Options
+    )
+    $searchText = ""
+    $currentIndex = 0
+    $itemsPerPage = 30
+
+    while ($true) {
+        Clear-HostWithBanner
+        Write-CenteredText "$Title`n" -Color Cyan
+        Write-CenteredText "Search: $searchText" -Color Yellow
+        Write-CenteredText "<- -> Arrow keys to change pages, Up/Down to select, Enter to confirm, ESC to cancel`n" -Color Gray
+        
+        # Filter options based on search text
+        $filteredOptions = $Options | Where-Object { $_ -like "*$searchText*" }
+        
+        if ($filteredOptions.Count -eq 0) {
+            Write-CenteredText "No matches found" -Color Red
+            $currentIndex = 0
+        }
+        else {
+            # Calculate current page and total pages
+            $totalPages = [Math]::Ceiling($filteredOptions.Count / $itemsPerPage)
+            $currentPage = [Math]::Floor($currentIndex / $itemsPerPage)
+            $startIndex = $currentPage * $itemsPerPage
+            
+            # Display page information
+            Write-CenteredText "Page $($currentPage + 1) of $totalPages`n" -Color Gray
+            
+            # Display filtered options for current page
+            for ($i = $startIndex; $i -lt [Math]::Min($startIndex + $itemsPerPage, $filteredOptions.Count); $i++) {
+                if ($i -eq $currentIndex) {
+                    Write-CenteredText "-> $($filteredOptions[$i])" -Color Green
+                }
+                else {
+                    Write-CenteredText "  $($filteredOptions[$i])" -Color White
+                }
+            }
+        }
+        
+
+        # Handle key input
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        
+        switch ($key.VirtualKeyCode) {
+            38 { # Up arrow
+                if ($currentIndex -gt 0) { $currentIndex-- }
+            }
+            40 { # Down arrow
+                if ($currentIndex -lt ($filteredOptions.Count - 1)) { $currentIndex++ }
+            }
+            37 { # Left arrow - Previous page
+                $newIndex = $currentIndex - $itemsPerPage
+                if ($newIndex -ge 0) {
+                    $currentIndex = $newIndex
+                }
+            }
+            39 { # Right arrow - Next page
+                $newIndex = $currentIndex + $itemsPerPage
+                if ($newIndex -lt $filteredOptions.Count) {
+                    $currentIndex = $newIndex
+                }
+            }
+            13 { # Enter
+                if ($filteredOptions.Count -gt 0) {
+                    return $Options.IndexOf($filteredOptions[$currentIndex])
+                }
+            }
+            27 { # Escape
+                return -1
+            }
+            8 { # Backspace
+                if ($searchText.Length -gt 0) {
+                    $searchText = $searchText.Substring(0, $searchText.Length - 1)
+                    $currentIndex = 0
+                }
+            }
+            default {
+                if ([char]::IsLetterOrDigit($key.Character) -or 
+                    [char]::IsPunctuation($key.Character) -or 
+                    [char]::IsWhiteSpace($key.Character)) {
+                    $searchText += $key.Character
+                    $currentIndex = 0
+                }
+            }
+        }
+    }
+}
+
+    function Get-PrinterSelection {
+        $servers = @('CH-DC', 'CH-DC2', 'SWC-PS01')
+        
+        $serverSelection = Show-SearchableMenu -Title "Select Print Server" -Options $servers
+        if ($serverSelection -eq -1) { return $null }
+        
+        $selectedServer = $servers[$serverSelection]
+        Clear-HostWithBanner
+        Write-Host "Getting printers from $selectedServer..." -ForegroundColor Cyan
+        
+        try {
+            $printers = Get-Printer -ComputerName $selectedServer | 
+                Select-Object -ExpandProperty Name |
+                Sort-Object
+            
+            if ($printers.Count -eq 0) {
+                Write-Host "No printers found on $selectedServer" -ForegroundColor Red
+                Pause
+                return $null
+            }
+
+            $printerSelection = Show-SearchableMenu -Title "Select Printer on $selectedServer" -Options $printers
+            if ($printerSelection -eq -1) { return $null }
+            
+            return @{
+                printer = $printers[$printerSelection]
+                server = $selectedServer
+            }
+        }
+        catch {
+            Write-Host "Error accessing printers on $selectedServer : $_" -ForegroundColor Red
+            Pause
+            return $null
+        }
+    }
+
+    # Main printer selection loop
+    while ($SelectedPrinter -eq "") {
+        Clear-HostWithBanner
+        $printerResults = Get-PrinterSelection
+        
+        if ($null -eq $printerResults) { 
+            Write-Host "Printer selection cancelled" -ForegroundColor Yellow
+            return 
+        }
+        
+        $SelectedPrinter = $printerResults.printer
+        $SelectedPrintServer = $printerResults.server
+        
+        # Confirm selection
+        Clear-HostWithBanner
+        Write-Host "Selected Printer: $SelectedPrinter"
+        Write-Host "Print Server: $SelectedPrintServer`n"
+        
+        $confirmation = Show-ArrowMenu -Title " $SelectedPrinter on $SelectedPrintServer Is this correct?" -Options @("Yes", "No")
+        
+        if ($confirmation -eq 0) {
+            try {
+                Write-Host "`nAdding printer..." -ForegroundColor Cyan
+                Add-Printer -ConnectionName "\\$SelectedPrintServer\$SelectedPrinter" -ErrorAction Stop
+                Clear-HostWithBanner
+                Write-Host "`nPrinter $SelectedPrinter added successfully from $SelectedPrintServer" -ForegroundColor Green
+                Pause
+                return
+            }
+            catch {
+                Write-Host "`nFailed to add printer: $_" -ForegroundColor Red
+                Pause
+                return
+            }
+        }
+        else {
+            $SelectedPrinter = ""
+        }
+    }
+}
+
+function Get-vtsMappedDrive {
+  <#
+  .Description
+  Displays Mapped Drives information from the Windows Registry.
+  .EXAMPLE
+  PS> Get-vtsMappedDrive
+  
+  Output:
+  Username            : VTS-ROBERTO\rober
+  DriveLetter         : Y
+  RemotePath          : https://live.sysinternals.com
+  ConnectWithUsername : rober
+  SID                 : S-1-5-21-376445358-2603134888-3166729622-1001
+  
+  .LINK
+  Drive Management
+  #>
+  [CmdletBinding()]
+  param ()
+
+  # On most OSes, HKEY_USERS only contains users that are logged on.
+  # There are ways to load the other profiles, but it can be problematic.
+  $Drives = Get-ItemProperty "Registry::HKEY_USERS\*\Network\*" 2>$null
+
+  # See if any drives were found
+  if ( $Drives ) {
+
+    ForEach ( $Drive in $Drives ) {
+
+      # PSParentPath looks like this: Microsoft.PowerShell.Core\Registry::HKEY_USERS\S-1-5-21-##########-##########-##########-####\Network
+      $SID = ($Drive.PSParentPath -split '\\')[2]
+
+      [PSCustomObject]@{
+        # Use .NET to look up the username from the SID
+        Username            = ([System.Security.Principal.SecurityIdentifier]"$SID").Translate([System.Security.Principal.NTAccount])
+        DriveLetter         = $Drive.PSChildName
+        RemotePath          = $Drive.RemotePath
+
+        # The username specified when you use "Connect using different credentials".
+        # For some reason, this is frequently "0" when you don't use this option. I remove the "0" to keep the results consistent.
+        ConnectWithUsername = $Drive.UserName -replace '^0$', $null
+        SID                 = $SID
+      }
+
+    }
+
+  }
+  else {
+
+    Write-Verbose "No mapped drives were found"
+
+  }
+}
+
+function New-vtsMappedDrive {
+  <#
+  .DESCRIPTION
+  Maps a remote drive. Prompts the user for drive letter and path if not provided.
+  .EXAMPLE
+  PS> New-vtsMappedDrive
+  #>
+  param(
+    [string]$Letter,
+    [string]$Path
+  )
+
+  if (-not $Letter) {
+    $Letter = Read-Host "Enter drive letter (e.g., Z)"
+  }
+  if (-not $Path) {
+    $Path = Read-Host "Enter network path (e.g., \\server\share)"
+  }
+
+  if (-not $Letter -or -not $Path) {
+    Write-Host "Both drive letter and path are required." -ForegroundColor Red
+    return
+  }
+
+  try {
+    $drive = New-PSDrive -Name "$Letter" -PSProvider FileSystem -Root "$Path" -Persist -Scope Global -ErrorAction Stop
+    Write-Host "Drive $Letter mapped to $Path successfully." -ForegroundColor Green
+    return $drive
+  }
+  catch {
+    Write-Host "Failed to map drive: $_" -ForegroundColor Red
+  }
+}
+
+
 
 # This is how you would add a new menu option
 #if we were adding a new menu option named script A3, it would look like this
@@ -867,68 +1178,69 @@ function Get-VTSNetAdapter {
 
     
 # Menu One - Hardware Options
-$HardwareOptions = @("See USB Attached devices", "Run Battery Health")
+$HardwareOptions = @("See USB Attached devices", "Run Battery Health", "Clear Disk Space", "(ADMIN)(REBOOT)check disk and fix errors")
 $HardwareActions = @(
     { Get-vtsUSB },
-    { Get-vtsBattery }
+    { Get-vtsBattery },
+    { clear-Space },
+    { chkdsk C: /f /r /x }
 )
 
 
 
 # Menu 2 - Software Options
-$SoftwareOptions = @("Athena")
+$SoftwareOptions = @("(CH)Athena", "Adobe")
 $SoftwareActions = @(
     
-    { Show-Menu "Athena" $AthenaOptions $AthenaActions }
+    { Show-Menu "Athena" $AthenaOptions $AthenaActions },
     { Show-Menu "Adobe" $AdobeOptions $AdobeActions }
 )
 
-$adobeOptions = @("(ADMIN)Adobe Reader DC install", "(ADMIN)(LICENSE)Adobe Reader PRO install")
+
+# Menu 2a Athena Submenu
+$AthenaOptions = @("(ADMIN)Reset ADM")
+$AthenaActions = @(
+    { Restart-Service athenaNetDeviceManager3.1 }
+)
+
+$adobeOptions = @("(ADMIN)Adobe Reader DC install")
 $adobeActions = @(
-    {choco install adobereader -y; Write-Host "Adobe Reader installed"; },
-    { Write-Host "Adobe Reader selected"; Write-Host "Put your code here" }
+    {choco install adobereader -y; Write-Host "Adobe Reader installed"; }
 )  
 
 
-
-# Menu 2a Athena Submenu
-$AthenaOptions = @("(ADMIN)(TESTING)Reset ADM", "Reinstall ADM")
-$AthenaActions = @(
-    { Restart-Service athenaNetDeviceManager3.1 },
-    { Write-Host "Reinstalling ADM..."; Write-Host "Put your code here" }
-)
-
-
 # menu 3 - Network Options
-$NetworkOptions = @("Get network info", "Speed Test", "(TESTING)(ADMIN)Change Network Adapters")
+$NetworkOptions = @("Get network info", "Speed Test", "(TESTING)(ADMIN)Change Network Adapters", "(ADMIN)Reset Network Adapters")
 $NetworkActions = @(
     { Get-VTSInterfaces },
     { VTSSpeedtest },
-    { Get-VTSNetAdapter }
+    { Get-VTSNetAdapter },
+    { Reset-NetAdapter }
 
 )
 
 
 
 # Menu Four - Windows OS Options
-$OSOptions = @("(ADMIN) Update Windows", "(ADMIN)Fix corrupted files" , "(TESTING)(ADMIN)Clear Disk Space")
+$OSOptions = @("(ADMIN) Update Windows", "(ADMIN)Fix corrupted files" , "(ADMIN)Clear Disk Space", "(TESTING)List Mapped Drives", "(TESTING)Add Mapped Drive")
 $OSOptionsActions = @(
     { Get-VTSUpdates },
     { Dism /online /cleanup-image /restorehealth; sfc /scannow },
-    { clear-Space }
+    { clear-Space },
+    { Get-vtsMappedDrive },
+    { New-vtsMappedDrive } 
 )
-
 # Menu 5 - Printer Options
-$PrinterOptions = @("List Printers", "(USER)Add Printer", "Remove old print server printers and FQDN printers")
+$PrinterOptions = @("(USER)List Printers", "(CH)Remove old print server printers and FQDN printers", "(CH)Add Printer")
 $PrinterActions = @(
     { Get-Printer },
-    { Write-Host "Add Printer functionality placeholder. Put your tests here." }
-    { PrinterRepair }
+    { PrinterRepair },
+    { Add-VTSPrinter }
 )
 
 # === Main Menu Loop ===
 while ($true) {
-    $mainOptions = @("Hardware Tests", "Software Tests", "Network tests", "Windows OS Options", "Printer Options", "Exit")
+    $mainOptions = @("Hardware Tools", "Software Tools", "Network Tools", "Windows OS Tools", "Printer Tools", "Exit")
     $mainChoice = Show-ArrowMenu -Title "Main Menu" -Options $mainOptions
 
     switch ($mainChoice) {
@@ -938,6 +1250,7 @@ while ($true) {
         3 { Show-Menu "Windows OS Options" $OSOptions $OSOptionsActions }
         4 { Show-Menu "Printer Options" $PrinterOptions $PrinterActions }
         5 { return }  
-        -1 { return } 
+        -1 { return }
     }
 }
+
