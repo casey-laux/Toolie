@@ -898,7 +898,7 @@ function Add-VTSPrinter {
     )
     $searchText = ""
     $currentIndex = 0
-    $itemsPerPage = 30
+    $itemsPerPage = 10
 
     while ($true) {
         Clear-HostWithBanner
